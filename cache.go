@@ -90,6 +90,22 @@ func (c *cache[K, V]) Replace(k K, x V, d time.Duration) error {
 	return nil
 }
 
+func (c *cache[K, V]) UpdateExpiration(k K, d time.Duration) error {
+	c.mu.Lock()
+	item, found := c.items[k]
+	if !found || item.Expired() {
+		c.mu.Unlock()
+		return fmt.Errorf("item doesn't exist")
+	}
+	item.Expiration = time.Now().Add(d).UnixNano()
+	c.mu.Unlock()
+	return nil
+}
+
+func (c *cache[K, V]) UpdateExpirationDefault(k K) error {
+	return c.UpdateExpiration(k, DefaultExpiration)
+}
+
 func (c *cache[K, V]) Get(k K) (V, bool) {
 	c.mu.RLock()
 	item, found := c.items[k]
@@ -116,6 +132,23 @@ func (c *cache[K, V]) GetWithExpiration(k K) (V, time.Time, bool) {
 	}
 	c.mu.RUnlock()
 	return item.Object, time.Time{}, true
+}
+
+func (c *cache[K, V]) GetWithUpdateExpiration(k K, d time.Duration) (V, bool) {
+	c.mu.Lock()
+	item, found := c.items[k]
+	if !found || item.Expired() {
+		c.mu.Unlock()
+		var zero V
+		return zero, false
+	}
+	item.Expiration = time.Now().Add(d).UnixNano()
+	c.mu.Unlock()
+	return item.Object, true
+}
+
+func (c *cache[K, V]) GetWithUpdateExpirationDefault(k K) (V, bool) {
+	return c.GetWithUpdateExpiration(k, DefaultExpiration)
 }
 
 func (c *cache[K, V]) Exec(k K, e func(V) V) error {
