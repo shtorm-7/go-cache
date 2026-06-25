@@ -4,7 +4,6 @@ import (
 	"encoding/gob"
 	"fmt"
 	"io"
-	"runtime"
 	"sync"
 	"time"
 )
@@ -300,10 +299,6 @@ func (j *janitor[K, V]) Run(c *cache[K, V]) {
 	}
 }
 
-func stopJanitor[K comparable, V any](c *Cache[K, V]) {
-	c.janitor.stop <- true
-}
-
 func runJanitor[K comparable, V any](c *cache[K, V], ci time.Duration) {
 	j := &janitor[K, V]{
 		Interval: ci,
@@ -328,9 +323,29 @@ func newCacheWithJanitor[K comparable, V any](de, ci time.Duration, m map[K]Item
 	C := &Cache[K, V]{c}
 	if ci > 0 {
 		runJanitor(c, ci)
-		runtime.SetFinalizer(C, stopJanitor[K, V])
 	}
 	return C
+}
+
+func (c *cache[K, V]) Close() {
+	if c.janitor != nil {
+		close(c.janitor.stop)
+		c.janitor = nil
+	}
+	var evictedItems []keyAndValue[K, V]
+	c.mu.Lock()
+	for k := range c.items {
+		ov, evicted := c.delete(k)
+		if evicted {
+			evictedItems = append(evictedItems, keyAndValue[K, V]{k, ov})
+		}
+	}
+	c.mu.Unlock()
+	if c.onEvicted != nil {
+		for _, v := range evictedItems {
+			c.onEvicted(v.key, v.value)
+		}
+	}
 }
 
 func New[K comparable, V any](defaultExpiration, cleanupInterval time.Duration) *Cache[K, V] {
